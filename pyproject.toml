@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unifi-snapshot"
+dynamic = ["version"]
+description = "Read-only YAML snapshot of a UniFi Network configuration, with secret redaction"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = ["PyYAML>=6.0"]
+keywords = ["unifi", "ubiquiti", "network", "backup", "gitops", "snapshot"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Archiving :: Backup",
+]
+
+[project.urls]
+Homepage = "https://github.com/<owner>/unifi-snapshot"
+Changelog = "https://github.com/<owner>/unifi-snapshot/blob/main/CHANGELOG.md"
+
+[project.scripts]
+unifi-snapshot = "unifi_snapshot.cli:main"
+
+[tool.setuptools]
+packages = ["unifi_snapshot"]
+
+[tool.setuptools.dynamic]
+version = { attr = "unifi_snapshot.__version__" }

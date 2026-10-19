@@ -1,0 +1,12 @@
+.env
+*.pem
+__pycache__/
+*.pyc
+.unifi-export-*/
+.venv/
+build/
+dist/
+*.egg-info/
+# Snapshot-Ausgaben gehören in ein eigenes, privates Repo
+/state/
+/snapshot/

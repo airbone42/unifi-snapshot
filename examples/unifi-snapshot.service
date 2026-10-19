@@ -1,0 +1,20 @@
+# Beispiel-Unit. Pfade über Environment= bzw. eine Drop-in-Datei anpassen
+# (systemctl edit unifi-snapshot.service). Gestartet wird sie vom Timer.
+[Unit]
+Description=UniFi-Konfiguration als Snapshot ins Git-Repo schreiben
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=unifi-snapshot
+Group=unifi-snapshot
+Environment=SNAPSHOT_REPO=/var/lib/unifi-snapshot/repo
+Environment=SNAPSHOT_SUBDIR=state
+Environment=UNIFI_ENV_FILE=/etc/unifi-snapshot/env
+Environment=UNIFI_SNAPSHOT=/usr/local/bin/unifi-snapshot
+ExecStart=/bin/bash /usr/local/lib/unifi-snapshot/snapshot.sh
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
