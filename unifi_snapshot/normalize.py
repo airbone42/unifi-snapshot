@@ -123,7 +123,7 @@ def resolve_ids(obj: Any, idmap: dict[str, str], _key: str | None = None) -> Any
         return {k: resolve_ids(v, idmap, k) for k, v in obj.items()}
     if isinstance(obj, list):
         return [resolve_ids(v, idmap, _key) for v in obj]
-    if isinstance(obj, str) and _key not in ("id", "_id") and obj in idmap:
+    if isinstance(obj, str) and obj and _key not in ("id", "_id") and obj in idmap:
         return idmap[obj]
     return obj
 
@@ -155,5 +155,9 @@ def build_names(objs: list[dict]) -> dict[str, str]:
     for o in objs:
         n = display_name(o)
         oid = object_id(o)
-        names[oid] = f"{n}#{oid[-6:]}" if counts[n] > 1 and oid else n
+        if not oid:
+            # Objekte ohne ID (z. B. abgeleitete Policies) dürfen nicht "" belegen,
+            # sonst ersetzt resolve_ids jeden leeren String durch ihren Namen.
+            continue
+        names[oid] = f"{n}#{oid[-6:]}" if counts[n] > 1 else n
     return names
