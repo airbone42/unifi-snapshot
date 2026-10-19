@@ -134,10 +134,11 @@ def collect_site(client: UnifiClient, site: dict, legacy: bool) -> Snapshot:
             full.append(o)
         names = build_names(full)
         for o in full:
-            snap.idmap[object_id(o)] = f"{kind}:{names[object_id(o)]}"
+            if object_id(o):
+                snap.idmap[object_id(o)] = f"{kind}:{names[object_id(o)]}"
             snap.items.append(Item(kind, folder, o))
         if kind == "zone":
-            zones_raw = {object_id(o): names[object_id(o)] for o in full}
+            zones_raw = {object_id(o): names[object_id(o)] for o in full if object_id(o)}
 
     # Firewall-Policies nach Zonenpaar gruppieren, Reihenfolge je Paar mitsichern
     pairs = set()
@@ -268,11 +269,15 @@ def render(snap: Snapshot, root: Path) -> int:
     count = 0
     used: set[Path] = set()
     for it in sorted(snap.items, key=lambda i: (i.folder, i.subfolder, object_id(i.obj))):
-        name = snap.idmap.get(object_id(it.obj), "").split(":", 1)[-1] or object_id(it.obj)
+        name = snap.idmap.get(object_id(it.obj), "").split(":", 1)[-1] or display_name(it.obj)
         folder = root / it.folder / it.subfolder if it.subfolder else root / it.folder
         path = folder / f"{slugify(name)}.yaml"
-        if path in used:  # Kollision nach Slugify
+        if path in used and object_id(it.obj):  # Kollision nach Slugify
             path = folder / f"{slugify(name)}-{object_id(it.obj)[-6:]}.yaml"
+        n = 2
+        while path in used:  # Objekte ohne ID oder gleiches ID-Kürzel: nie überschreiben
+            path = folder / f"{slugify(name)}-{n}.yaml"
+            n += 1
         used.add(path)
         _dump(path, _clean(it.obj, snap.idmap))
         count += 1

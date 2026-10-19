@@ -58,14 +58,17 @@ class ExportTest(MockTestCase):
             self.assertIn("default/legacy/wireguard-users/vpn.yaml", files)
             self.assertIn("_meta.yaml", files)
             # doppelte Namen kollidieren nicht
-            allow = [f for f in files if "policies/lan__external/" in f]
+            allow = [f for f in files if "policies/lan__external/allow" in f]
             self.assertEqual(len(allow), 2, allow)
+            self.assertTrue(any(f.endswith("__external/derived.yaml") for f in files))
+            self.assertTrue(any(f.endswith("__external/derived-2.yaml") for f in files))
 
             # IDs aufgelöst, eigenes id-Feld bleibt
             pol = yaml.safe_load(
                 (out / "default/firewall/policies/isolated__external/block-isolated-direct.yaml").read_text())
             self.assertEqual(pol["source"]["zoneId"], "zone:isolated")
             self.assertEqual(pol["id"], mc.POL_1)
+            self.assertEqual(pol["description"], "")
             self.assertNotIn("updatedAt", pol)
             order = yaml.safe_load((out / "default/firewall/ordering/isolated__external.yaml").read_text())
             self.assertEqual(order["orderedFirewallPolicyIds"]["beforeSystemDefined"], ["policy:Block isolated direct"])

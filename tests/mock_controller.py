@@ -77,8 +77,11 @@ ROUTES = {
         {"id": Z_LAN, "name": "lan"},
     ], "totalCount": 3},
     f"{I}/firewall/policies": {"data": [
-        {"id": POL_1, "name": "Block isolated direct", "action": {"type": "BLOCK"},
+        {"id": POL_1, "name": "Block isolated direct", "action": {"type": "BLOCK"}, "description": "",
          "source": {"zoneId": Z_ISO}, "destination": {"zoneId": Z_EXT}, "updatedAt": "2026-10-19"},
+        # Abgeleitete Policy ohne ID: darf keinen leeren String als ID belegen
+        {"name": "Derived", "source": {"zoneId": Z_LAN}, "destination": {"zoneId": Z_EXT}},
+        {"name": "Derived", "source": {"zoneId": Z_LAN}, "destination": {"zoneId": Z_EXT}},
         {"id": POL_2, "name": "Allow", "source": {"zoneId": Z_LAN}, "destination": {"zoneId": Z_EXT}},
         {"id": POL_3, "name": "Allow", "source": {"zoneId": Z_LAN}, "destination": {"zoneId": Z_EXT}},
     ], "totalCount": 3},
