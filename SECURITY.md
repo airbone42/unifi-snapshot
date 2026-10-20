@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report vulnerabilities privately through GitHub Security Advisories:
-<https://github.com/<owner>/unifi-snapshot/security/advisories/new>
+<https://github.com/airbone42/unifi-snapshot/security/advisories/new>
 
 Do not open a public issue for security problems. If a report involves real configuration data, strip it down to a minimal, invented example first. Never attach a real snapshot, API key, certificate or private key.
 

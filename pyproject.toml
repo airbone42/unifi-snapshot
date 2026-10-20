@@ -8,9 +8,12 @@ dynamic = ["version"]
 description = "Read-only YAML snapshot of a UniFi Network configuration, with secret redaction"
 readme = "README.md"
 requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "Tobias Zander" }]
 dependencies = ["PyYAML>=6.0"]
 keywords = ["unifi", "ubiquiti", "network", "backup", "gitops", "snapshot"]
 classifiers = [
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
     "Operating System :: POSIX :: Linux",
@@ -19,8 +22,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/<owner>/unifi-snapshot"
-Changelog = "https://github.com/<owner>/unifi-snapshot/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/airbone42/unifi-snapshot"
+Changelog = "https://github.com/airbone42/unifi-snapshot/blob/main/CHANGELOG.md"
 
 [project.scripts]
 unifi-snapshot = "unifi_snapshot.cli:main"

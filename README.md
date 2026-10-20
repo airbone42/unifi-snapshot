@@ -26,7 +26,7 @@ Not exported: device and client state (uptime, statistics) and anything else wit
 Requires Python 3.13 or newer. The only dependency is PyYAML.
 
 ```bash
-pip install "git+https://github.com/<owner>/unifi-snapshot@v0.1.0"
+pip install "git+https://github.com/airbone42/unifi-snapshot@v0.1.0"
 ```
 
 Pin a release tag. This installs the console script `unifi-snapshot`; `python -m unifi_snapshot` works as well.
@@ -148,4 +148,4 @@ The tests run against a mock controller with invented data and check, among othe
 
 ## License
 
-TBD.
+MIT, see [LICENSE](LICENSE).
