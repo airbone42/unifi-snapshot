@@ -6,9 +6,11 @@ import logging
 import os
 import shutil
 import tempfile
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import yaml
 
@@ -26,6 +28,9 @@ from .normalize import (
 )
 
 log = logging.getLogger(__name__)
+
+T = TypeVar("T")
+R = TypeVar("R")
 
 # kind, Zielordner, Listen-Pfad, Detail-Pfad (oder None)
 INTEGRATION_RESOURCES = [
@@ -109,7 +114,20 @@ def _v2_skippable(e: ApiError) -> bool:
     return e.status in (401, 403, 404, 405)
 
 
-def collect_site(client: UnifiClient, site: dict, legacy: bool) -> Snapshot:
+def _map(fn: Callable[[T], R], args: Iterable[T], workers: int) -> list[R]:
+    """fn auf alle args anwenden, mit workers > 1 parallel. Reihenfolge bleibt, Fehler werfen.
+
+    Detail- und Reihenfolge-Abfragen machen den Großteil des Exports aus (eine je Policy,
+    eine je Zonenpaar) und sind voneinander unabhängig.
+    """
+    args = list(args)
+    if workers <= 1 or len(args) <= 1:
+        return [fn(a) for a in args]
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(fn, args))
+
+
+def collect_site(client: UnifiClient, site: dict, legacy: bool, workers: int = 1) -> Snapshot:
     snap = Snapshot()
     sid = site["id"]
     base = f"/v1/sites/{sid}"
@@ -123,15 +141,17 @@ def collect_site(client: UnifiClient, site: dict, legacy: bool) -> Snapshot:
                 snap.skipped.append(f"integration{list_path} ({e.status})")
                 continue
             raise
-        full = []
-        for o in objs:
+
+        def detail(o: dict, detail_path: str | None = detail_path) -> dict:
             if detail_path and object_id(o):
                 try:
-                    o = {**o, **client.integration(base + detail_path.format(id=object_id(o)))}
+                    return {**o, **client.integration(base + detail_path.format(id=object_id(o)))}
                 except ApiError as e:
                     if not _not_available(e):
                         raise
-            full.append(o)
+            return o
+
+        full = _map(detail, objs, workers)
         names = build_names(full)
         for o in full:
             if object_id(o):
@@ -150,17 +170,23 @@ def collect_site(client: UnifiClient, site: dict, legacy: bool) -> Snapshot:
         it.subfolder = f"{slugify(zones_raw.get(src, src or 'any'))}__{slugify(zones_raw.get(dst, dst or 'any'))}"
         if src and dst:
             pairs.add((src, dst))
-    for src, dst in sorted(pairs):
+
+    def ordering(pair: tuple[str, str]) -> Any:
         try:
-            order = client.integration(
+            return client.integration(
                 base + "/firewall/policies/ordering",
-                {"sourceFirewallZoneId": src, "destinationFirewallZoneId": dst},
+                {"sourceFirewallZoneId": pair[0], "destinationFirewallZoneId": pair[1]},
             )
         except ApiError as e:
             if _not_available(e):
-                snap.skipped.append("integration/firewall/policies/ordering")
-                break
+                return None
             raise
+
+    for (src, dst), order in zip(sorted(pairs), _map(ordering, sorted(pairs), workers)):
+        if order is None:
+            if "integration/firewall/policies/ordering" not in snap.skipped:
+                snap.skipped.append("integration/firewall/policies/ordering")
+            continue
         rel = f"firewall/ordering/{slugify(zones_raw.get(src, src))}__{slugify(zones_raw.get(dst, dst))}.yaml"
         snap.extra[rel] = order
 
@@ -290,8 +316,11 @@ def render(snap: Snapshot, root: Path) -> int:
     return count
 
 
-def export(client: UnifiClient, out: Path, legacy: bool = True) -> int:
-    """Exportiert alle Sites nach `out`. Bricht bei Fehlern ab, ohne `out` anzufassen."""
+def export(client: UnifiClient, out: Path, legacy: bool = True, workers: int = 1) -> int:
+    """Exportiert alle Sites nach `out`. Bricht bei Fehlern ab, ohne `out` anzufassen.
+
+    workers > 1: Detail- und Reihenfolge-Abfragen parallel (gleiches Ergebnis, kürzer).
+    """
     info = client.integration("/v1/info")
     sites = client.paginate("/v1/sites")
     out = out.resolve()
@@ -300,7 +329,7 @@ def export(client: UnifiClient, out: Path, legacy: bool = True) -> int:
         total = 0
         meta = {"application": strip_volatile(info), "sites": {}}
         for site in sites:
-            snap = collect_site(client, site, legacy)
+            snap = collect_site(client, site, legacy, workers)
             site_dir = tmp / slugify(site.get("internalReference") or site.get("name") or site["id"])
             total += render(snap, site_dir)
             meta["sites"][site.get("name", site["id"])] = {

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `export --workers N` (or `UNIFI_WORKERS`): fetch policy details and per-zone-pair orderings with N parallel requests. These are one request per policy and one per zone pair, which grows quadratically with the number of zones. Default stays 1, the output is identical.
+
 ## [0.1.0] - 2026-10-20
 
 First public release.

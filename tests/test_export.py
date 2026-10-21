@@ -31,8 +31,8 @@ class MockTestCase(unittest.TestCase):
     def tearDown(self):
         mc.FAIL.clear()
 
-    def run_export(self, out: Path, key=mc.API_KEY, legacy=True):
-        return export(UnifiClient(self.host, key), out, legacy=legacy)
+    def run_export(self, out: Path, key=mc.API_KEY, legacy=True, workers=1):
+        return export(UnifiClient(self.host, key), out, legacy=legacy, workers=workers)
 
 
 class ExportTest(MockTestCase):
@@ -91,6 +91,26 @@ class ExportTest(MockTestCase):
             fa = {p.relative_to(a): p.read_text(encoding="utf-8") for p in a.rglob("*.yaml")}
             fb = {p.relative_to(b): p.read_text(encoding="utf-8") for p in b.rglob("*.yaml")}
             self.assertEqual(fa, fb)
+
+    def test_parallel_same_result(self):
+        # Parallel abgefragt (Hook im Gate, 21.10.2026: 700 Einzelabfragen, 6 bis 8 min) wie seriell
+        with tempfile.TemporaryDirectory() as d:
+            a, b = Path(d) / "a", Path(d) / "b"
+            self.run_export(a)
+            self.run_export(b, workers=4)
+            fa = {p.relative_to(a): p.read_text(encoding="utf-8") for p in a.rglob("*.yaml")}
+            fb = {p.relative_to(b): p.read_text(encoding="utf-8") for p in b.rglob("*.yaml")}
+            self.assertEqual(fa, fb)
+            self.assertTrue(any("ordering" in str(p) for p in fb))
+
+    def test_parallel_server_error_aborts(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "state"
+            self.run_export(out)
+            mc.FAIL[f"{mc.I}/firewall/policies/{mc.POL_2}"] = 500  # Detail-Abfrage mitten im Pool
+            with self.assertRaises(ApiError):
+                self.run_export(out, workers=4)
+            self.assertTrue((out / "_meta.yaml").exists())  # alter Stand bleibt
 
     def test_error_keeps_old_state(self):
         with tempfile.TemporaryDirectory() as d:

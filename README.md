@@ -42,6 +42,7 @@ All settings come from environment variables (see `.env.example`):
 | `UNIFI_CA_FILE` | (unset) | PEM file of the console certificate. Enables SHA-256 fingerprint pinning (recommended) |
 | `UNIFI_VERIFY_TLS` | `true` | Normal certificate chain validation. `false` disables TLS verification (first tests only) |
 | `UNIFI_LEGACY` | `true` | Also export the unofficial legacy API (v1 and v2). Set to `false` if the console rejects the key there |
+| `UNIFI_WORKERS` | `1` | Parallel requests for policy details and orderings (`export --workers N`). One request per policy and per zone pair, so large rule sets profit most |
 
 Create a dedicated local account for the API key and keep the key out of every repository.
 

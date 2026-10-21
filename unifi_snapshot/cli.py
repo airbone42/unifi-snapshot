@@ -38,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     e = sub.add_parser("export", help="Live-Konfiguration als YAML-Snapshot schreiben")
     e.add_argument("--out", default="state", type=Path)
     e.add_argument("--no-legacy", action="store_true", help="nur offizielle Integration API (wie UNIFI_LEGACY=false)")
+    e.add_argument("--workers", type=int, default=None,
+                   help="parallele Abfragen für Details und Reihenfolgen (wie UNIFI_WORKERS, Standard 1)")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args(argv)
 
@@ -51,7 +53,8 @@ def main(argv: list[str] | None = None) -> int:
                   + ", ".join(f"{s.get('name')} ({s.get('internalReference')})" for s in sites))
             return 0
         legacy = not args.no_legacy and _bool(os.environ.get("UNIFI_LEGACY"), True)
-        n = export(client, args.out, legacy=legacy)
+        workers = args.workers if args.workers is not None else int(os.environ.get("UNIFI_WORKERS") or 1)
+        n = export(client, args.out, legacy=legacy, workers=max(1, workers))
         print(f"{n} Dateien nach {args.out} geschrieben")
         return 0
     except ApiError as err:
