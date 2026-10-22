@@ -76,6 +76,7 @@ class UnifiClient:
         else:
             handler = urllib.request.HTTPSHandler(context=ssl._create_unverified_context())
         self.opener = urllib.request.build_opener(handler)
+        self.requests = 0  # Anzahl HTTP-Anfragen, für die Last auf dem Controller
 
     # -- low level -----------------------------------------------------------
 
@@ -88,6 +89,7 @@ class UnifiClient:
             method="GET",
             headers={"X-API-KEY": self.api_key, "Accept": "application/json"},
         )
+        self.requests += 1
         try:
             with self.opener.open(req, timeout=self.timeout) as resp:
                 raw = resp.read()

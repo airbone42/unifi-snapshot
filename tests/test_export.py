@@ -30,9 +30,11 @@ class MockTestCase(unittest.TestCase):
 
     def tearDown(self):
         mc.FAIL.clear()
+        mc.ORDERING.clear()
+        mc.REQUESTS.clear()
 
-    def run_export(self, out: Path, key=mc.API_KEY, legacy=True, workers=1):
-        return export(UnifiClient(self.host, key), out, legacy=legacy, workers=workers)
+    def run_export(self, out: Path, key=mc.API_KEY, legacy=True, workers=1, full=False):
+        return export(UnifiClient(self.host, key), out, legacy=legacy, workers=workers, full=full)
 
 
 class ExportTest(MockTestCase):
@@ -107,7 +109,7 @@ class ExportTest(MockTestCase):
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / "state"
             self.run_export(out)
-            mc.FAIL[f"{mc.I}/firewall/policies/{mc.POL_2}"] = 500  # Detail-Abfrage mitten im Pool
+            mc.FAIL[f"{mc.I}/firewall/policies/ordering"] = 500  # Reihenfolge-Abfragen im Pool
             with self.assertRaises(ApiError):
                 self.run_export(out, workers=4)
             self.assertTrue((out / "_meta.yaml").exists())  # alter Stand bleibt
@@ -121,6 +123,82 @@ class ExportTest(MockTestCase):
                 self.run_export(out, key="falsch")
             self.assertEqual(before, sorted(out.rglob("*")))
             self.assertEqual([p for p in Path(d).iterdir() if p.name.startswith(".unifi-export-")], [])
+
+
+class FewerRequestsTest(MockTestCase):
+    """Stichproben statt aller Detail- und Reihenfolge-Abfragen (UDM-Speicherleck, 22.10.2026)."""
+
+    POLICIES = [
+        {"id": mc.POL_1, "name": "Block isolated direct", "metadata": {"origin": "USER_DEFINED"},
+         "source": {"zoneId": mc.Z_ISO}, "destination": {"zoneId": mc.Z_EXT}},
+        {"id": mc.POL_2, "name": "Block All Traffic", "metadata": {"origin": "SYSTEM_DEFINED"},
+         "source": {"zoneId": mc.Z_LAN}, "destination": {"zoneId": mc.Z_EXT}},
+        {"id": mc.POL_3, "name": "Block All Traffic", "metadata": {"origin": "SYSTEM_DEFINED"},
+         "source": {"zoneId": mc.Z_LAN}, "destination": {"zoneId": mc.Z_ISO}},
+        {"name": "Allow Return", "metadata": {"origin": "DERIVED"},
+         "source": {"zoneId": mc.Z_EXT}, "destination": {"zoneId": mc.Z_ISO}},
+    ]
+    EMPTY = {"orderedFirewallPolicyIds": {"afterSystemDefined": [], "beforeSystemDefined": []}}
+
+    def routes(self, detail_extra=None):
+        r = {f"{mc.I}/firewall/policies": {"data": self.POLICIES, "totalCount": len(self.POLICIES)}}
+        for p in self.POLICIES:
+            if p.get("id"):
+                r[f"{mc.I}/firewall/policies/{p['id']}"] = {**p, **(detail_extra or {})}
+        return r
+
+    def count(self, part):
+        return sum(1 for p in mc.REQUESTS if part in p)
+
+    def files(self, root):
+        return {p.relative_to(root).as_posix(): p.read_text(encoding="utf-8") for p in root.rglob("*.yaml")}
+
+    def test_details_nur_stichprobe(self):
+        mc.ORDERING.update({(mc.Z_LAN, mc.Z_EXT): self.EMPTY, (mc.Z_LAN, mc.Z_ISO): self.EMPTY,
+                            (mc.Z_EXT, mc.Z_ISO): self.EMPTY})
+        with mock.patch.dict(mc.ROUTES, self.routes()), tempfile.TemporaryDirectory() as d:
+            self.run_export(Path(d) / "a")
+            # je Herkunft eine Detail-Abfrage (USER_DEFINED, SYSTEM_DEFINED), POL_3 entfällt
+            self.assertEqual(self.count(f"/firewall/policies/{mc.POL_1}"), 1)
+            self.assertEqual(self.count(f"/firewall/policies/{mc.POL_2}"), 1)
+            self.assertEqual(self.count(f"/firewall/policies/{mc.POL_3}"), 0)
+            # Reihenfolge: das Paar mit eigener Policy plus ein Stichproben-Paar
+            self.assertEqual(self.count("/firewall/policies/ordering"), 2)
+            optimized = self.files(Path(d) / "a")
+            mc.REQUESTS.clear()
+            self.run_export(Path(d) / "b", full=True)
+            self.assertEqual(self.count(f"/firewall/policies/{mc.POL_3}"), 1)
+            self.assertEqual(self.count("/firewall/policies/ordering"), 4)
+            self.assertEqual(optimized, self.files(Path(d) / "b"))
+            self.assertIn("default/firewall/ordering/lan__isolated.yaml", optimized)
+
+    def test_details_mit_neuen_feldern_alle(self):
+        with mock.patch.dict(mc.ROUTES, self.routes({"extra": 1})), tempfile.TemporaryDirectory() as d:
+            self.run_export(Path(d) / "a")
+            self.assertEqual(self.count(f"/firewall/policies/{mc.POL_3}"), 1)
+            pol_dir = Path(d) / "a/default/firewall/policies/lan__isolated"
+            pol = yaml.safe_load(next(pol_dir.glob("*.yaml")).read_text())
+            self.assertEqual(pol["extra"], 1)
+
+    def test_reihenfolge_stichprobe_nicht_leer_dann_alle(self):
+        # Stichproben-Paar hat doch eine Reihenfolge: alle Paare abfragen
+        with mock.patch.dict(mc.ROUTES, self.routes()), tempfile.TemporaryDirectory() as d:
+            self.run_export(Path(d) / "a")
+            self.assertEqual(self.count("/firewall/policies/ordering"), 4)
+
+    def test_tag_geraete_sortiert(self):
+        tags = {f"{mc.I}/device-tags": {"data": [{"id": "t1", "name": "aps", "deviceIds": ["c", "a", "b"]}],
+                                         "totalCount": 1}}
+        with mock.patch.dict(mc.ROUTES, tags), tempfile.TemporaryDirectory() as d:
+            self.run_export(Path(d) / "a")
+            tag = yaml.safe_load((Path(d) / "a/default/device-tags/aps.yaml").read_text())
+            self.assertEqual(tag["deviceIds"], ["a", "b", "c"])
+
+    def test_zaehler_im_client(self):
+        with tempfile.TemporaryDirectory() as d:
+            client = UnifiClient(self.host, mc.API_KEY)
+            export(client, Path(d) / "a")
+            self.assertEqual(client.requests, len(mc.REQUESTS))
 
 
 class LegacyV2Test(MockTestCase):

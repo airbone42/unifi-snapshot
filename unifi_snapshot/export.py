@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import shutil
@@ -127,7 +128,52 @@ def _map(fn: Callable[[T], R], args: Iterable[T], workers: int) -> list[R]:
         return list(ex.map(fn, args))
 
 
-def collect_site(client: UnifiClient, site: dict, legacy: bool, workers: int = 1) -> Snapshot:
+# Herkunft einer Policy in der Integration API. Nur USER_DEFINED steht in der Reihenfolge.
+NOT_ORDERED_ORIGINS = frozenset({"SYSTEM_DEFINED", "DERIVED"})
+
+
+def _origin(o: dict) -> str | None:
+    return (o.get("metadata") or {}).get("origin")
+
+
+def _details(objs: list[dict], fetch: Callable[[dict], dict], workers: int, full: bool) -> list[dict]:
+    """Detail-Abfragen, wo sie etwas bringen.
+
+    Jede Abfrage kostet den Controller etwas (auf der UDM mit UniFi OS 5.1.33 bleibt dabei
+    Speicher liegen, 22.10.2026). Für viele Arten liefert die Liste schon alles. Deshalb erst
+    eine Stichprobe: das erste Objekt je Herkunft (metadata.origin). Bringt keine davon ein
+    neues oder anderes Feld, entfallen die übrigen Abfragen dieser Art, sonst werden alle
+    geholt. full=True holt immer alle.
+    """
+    if full:
+        return _map(fetch, objs, workers)
+    sample: dict[Any, int] = {}
+    for i, o in enumerate(objs):
+        if object_id(o):
+            sample.setdefault(_origin(o), i)
+    out = list(objs)
+    gains = False
+    for i in sample.values():
+        out[i] = fetch(objs[i])
+        gains = gains or out[i] != objs[i]
+    if gains:
+        done = set(sample.values())
+        rest = [i for i in range(len(objs)) if i not in done]
+        for i, o in zip(rest, _map(fetch, [objs[i] for i in rest], workers)):
+            out[i] = o
+    return out
+
+
+def _has_ids(order: Any) -> bool:
+    """True, wenn eine Reihenfolge-Antwort irgendeine Policy-ID enthält."""
+    if isinstance(order, dict):
+        return any(_has_ids(v) for v in order.values())
+    if isinstance(order, list):
+        return bool(order)
+    return False
+
+
+def collect_site(client: UnifiClient, site: dict, legacy: bool, workers: int = 1, full: bool = False) -> Snapshot:
     snap = Snapshot()
     sid = site["id"]
     base = f"/v1/sites/{sid}"
@@ -151,17 +197,23 @@ def collect_site(client: UnifiClient, site: dict, legacy: bool, workers: int = 1
                         raise
             return o
 
-        full = _map(detail, objs, workers)
-        names = build_names(full)
-        for o in full:
+        if detail_path:
+            objs = _details(objs, detail, workers, full)
+        if kind == "tag":
+            # Die API liefert die Geräte eines Tags in wechselnder Reihenfolge (sonst Diff je Export)
+            objs = [{**o, "deviceIds": sorted(o["deviceIds"])} if isinstance(o.get("deviceIds"), list) else o
+                    for o in objs]
+        names = build_names(objs)
+        for o in objs:
             if object_id(o):
                 snap.idmap[object_id(o)] = f"{kind}:{names[object_id(o)]}"
             snap.items.append(Item(kind, folder, o))
         if kind == "zone":
-            zones_raw = {object_id(o): names[object_id(o)] for o in full if object_id(o)}
+            zones_raw = {object_id(o): names[object_id(o)] for o in objs if object_id(o)}
 
     # Firewall-Policies nach Zonenpaar gruppieren, Reihenfolge je Paar mitsichern
     pairs = set()
+    ordered = set()  # Zonenpaare mit Policies, die in der Reihenfolge stehen können
     for it in snap.items:
         if it.kind != "policy":
             continue
@@ -170,6 +222,8 @@ def collect_site(client: UnifiClient, site: dict, legacy: bool, workers: int = 1
         it.subfolder = f"{slugify(zones_raw.get(src, src or 'any'))}__{slugify(zones_raw.get(dst, dst or 'any'))}"
         if src and dst:
             pairs.add((src, dst))
+            if _origin(it.obj) not in NOT_ORDERED_ORIGINS:
+                ordered.add((src, dst))
 
     def ordering(pair: tuple[str, str]) -> Any:
         try:
@@ -182,7 +236,19 @@ def collect_site(client: UnifiClient, site: dict, legacy: bool, workers: int = 1
                 return None
             raise
 
-    for (src, dst), order in zip(sorted(pairs), _map(ordering, sorted(pairs), workers)):
+    # Paare nur mit System- und abgeleiteten Policies haben eine leere Reihenfolge (live geprüft
+    # an 399 Paaren, 22.10.2026). Eines davon wird abgefragt. Ist dessen Reihenfolge leer, gilt
+    # die Antwort für die anderen, sonst werden alle abgefragt.
+    plain = sorted(pairs - ordered)
+    orders: dict[tuple[str, str], Any] = {}
+    if plain and not full:
+        sample = ordering(plain[0])
+        orders[plain[0]] = sample
+        if sample is not None and not _has_ids(sample):
+            orders.update({p: copy.deepcopy(sample) for p in plain[1:]})
+    todo = [p for p in sorted(pairs) if p not in orders]
+    orders.update(zip(todo, _map(ordering, todo, workers)))
+    for (src, dst), order in sorted(orders.items()):
         if order is None:
             if "integration/firewall/policies/ordering" not in snap.skipped:
                 snap.skipped.append("integration/firewall/policies/ordering")
@@ -316,10 +382,11 @@ def render(snap: Snapshot, root: Path) -> int:
     return count
 
 
-def export(client: UnifiClient, out: Path, legacy: bool = True, workers: int = 1) -> int:
+def export(client: UnifiClient, out: Path, legacy: bool = True, workers: int = 1, full: bool = False) -> int:
     """Exportiert alle Sites nach `out`. Bricht bei Fehlern ab, ohne `out` anzufassen.
 
     workers > 1: Detail- und Reihenfolge-Abfragen parallel (gleiches Ergebnis, kürzer).
+    full: alle Detail- und Reihenfolge-Abfragen ohne Stichprobe (zum Vergleich).
     """
     info = client.integration("/v1/info")
     sites = client.paginate("/v1/sites")
@@ -329,7 +396,7 @@ def export(client: UnifiClient, out: Path, legacy: bool = True, workers: int = 1
         total = 0
         meta = {"application": strip_volatile(info), "sites": {}}
         for site in sites:
-            snap = collect_site(client, site, legacy, workers)
+            snap = collect_site(client, site, legacy, workers, full)
             site_dir = tmp / slugify(site.get("internalReference") or site.get("name") or site["id"])
             total += render(snap, site_dir)
             meta["sites"][site.get("name", site["id"])] = {
@@ -340,6 +407,7 @@ def export(client: UnifiClient, out: Path, legacy: bool = True, workers: int = 1
             for s in snap.skipped:
                 log.warning("nicht verfügbar, übersprungen: %s", s)
         _dump(tmp / "_meta.yaml", meta)
+        log.info("%d API-Abfragen", getattr(client, "requests", 0))
         if out.exists():
             shutil.rmtree(out)
         os.replace(tmp, out)

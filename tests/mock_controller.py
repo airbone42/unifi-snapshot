@@ -156,11 +156,16 @@ ROUTES = {
 
 # Pfad -> HTTP-Status, zum gezielten Erzeugen von Fehlern in einzelnen Tests
 FAIL: dict[str, int] = {}
+# (Quellzone, Zielzone) -> Antwort der Reihenfolge-Abfrage, sonst die aus ROUTES
+ORDERING: dict[tuple[str, str], dict] = {}
+# Alle angefragten Pfade (mit Query), zum Zählen der Abfragen
+REQUESTS: list[str] = []
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
+        REQUESTS.append(self.path)
         if self.headers.get("X-API-KEY") != API_KEY:
             self.send_response(401); self.end_headers(); return
         if u.path in FAIL:
@@ -171,6 +176,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path.endswith("/policies/ordering"):
             q = parse_qs(u.query)
             assert q["sourceFirewallZoneId"] and q["destinationFirewallZoneId"]
+            body = ORDERING.get((q["sourceFirewallZoneId"][0], q["destinationFirewallZoneId"][0]), body)
         data = json.dumps(body).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
